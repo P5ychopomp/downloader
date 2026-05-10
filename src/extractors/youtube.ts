@@ -4,6 +4,9 @@ import type { MediaItem, MediaResult, ResolveOptions } from "../types.ts";
 
 const INNERTUBE_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?key=";
 const INNERTUBE_NEXT_URL = "https://www.youtube.com/youtubei/v1/next?key=";
+const OEMBED_URL = "https://www.youtube.com/oembed";
+const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
 
 const ANDROID_CLIENT = {
   clientName: "ANDROID",
@@ -44,6 +47,15 @@ type YoutubeFormat = {
   width?: number;
   bitrate: number;
   audioChannels?: number;
+};
+
+type YoutubeOEmbedResponse = {
+  title?: string;
+  author_name?: string;
+  author_url?: string;
+  thumbnail_url?: string;
+  thumbnail_width?: number;
+  thumbnail_height?: number;
 };
 
 function extract_video_id(url: string): string | null {
@@ -89,6 +101,27 @@ function parse_abbreviated_number(text: string): number | undefined {
   if (!m) return undefined;
   const multipliers: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 };
   return Math.round(parseFloat(m[1]) * (multipliers[m[2].toLowerCase()] ?? 1));
+}
+
+async function fetch_oembed(
+  url: string,
+  headers: Record<string, string>,
+  timeout: number,
+): Promise<YoutubeOEmbedResponse | null> {
+  try {
+    const oembedUrl = new URL(OEMBED_URL);
+    oembedUrl.searchParams.set("url", url);
+    oembedUrl.searchParams.set("format", "json");
+
+    const response = await http_get(oembedUrl.toString(), {
+      headers,
+      timeout,
+    });
+
+    return (await response.json()) as YoutubeOEmbedResponse;
+  } catch {
+    return null;
+  }
 }
 
 function select_urls(
@@ -186,17 +219,21 @@ export default async function resolve(
   url: string,
   options: ResolveOptions,
 ): Promise<MediaResult> {
-  try {
-    const video_id = extract_video_id(url);
-    if (!video_id) {
-      throw new ParseError("Could not extract video ID from URL", "youtube");
-    }
+  const video_id = extract_video_id(url);
+  if (!video_id) {
+    throw new ParseError("Could not extract video ID from URL", "youtube");
+  }
 
-    const timeout = options.timeout ?? 15_000;
-    const request_headers = {
-      "Accept-Language": "en-US,en;q=0.9",
-      ...options.headers,
-    };
+  const timeout = options.timeout ?? 15_000;
+  const request_headers = {
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": BROWSER_USER_AGENT,
+    Cookie: "CONSENT=YES+1",
+    ...options.headers,
+  };
+
+  try {
 
     const page = await http_get(`https://www.youtube.com/watch?v=${video_id}`, {
       headers: request_headers,
@@ -303,6 +340,27 @@ export default async function resolve(
       meta,
     };
   } catch (e: any) {
+    const oembed = await fetch_oembed(url, request_headers, timeout);
+    if (oembed) {
+      const meta: MediaResult["meta"] = {
+        title: oembed.title || "YouTube video",
+        author: oembed.author_name || "Unknown",
+        platform: "youtube",
+        description: oembed.title,
+        thumbnail: oembed.thumbnail_url,
+      };
+
+      const urls: MediaItem[] = oembed.thumbnail_url
+        ? [{ type: "image", url: oembed.thumbnail_url, filename: `youtube-${video_id}.jpg` }]
+        : [];
+
+      return {
+        urls,
+        headers: {},
+        meta,
+      };
+    }
+
     if (e instanceof NetworkError || e instanceof ParseError) throw e;
     throw new ParseError(e.message, "youtube");
   }
