@@ -9,7 +9,13 @@ type TiktokMediaPayload = {
   id?: string;
   desc?: string;
   author?: { nickname?: string; uniqueId?: string };
-  stats?: { diggCount?: number; playCount?: number };
+  stats?: {
+    diggCount?: number;
+    playCount?: number;
+    commentCount?: number;
+    shareCount?: number;
+  };
+  createTime?: number | string;
   covers?: string[];
   imagePost?: { images?: Array<{ imageURL?: { urlList?: string[] } }> };
   music?: { playUrl?: string };
@@ -41,8 +47,12 @@ function extract_media(
   const key = Object.keys(data).find((k) =>
     k.startsWith(`/embed/v2/${post_id}`),
   );
-  const info = key ? data[key]?.videoData?.itemInfos : undefined;
+  const videoData = key ? data[key]?.videoData : undefined;
+  const info = videoData?.itemInfos;
   if (!info) return undefined;
+
+  // authorInfos lives at videoData level, not inside itemInfos
+  const authorInfos = videoData?.authorInfos ?? info.authorInfos;
 
   const item: TiktokMediaPayload = {
     ...(info.id && { id: info.id }),
@@ -52,6 +62,7 @@ function extract_media(
     ...(info.musicInfos?.playUrl?.[0] && {
       music: { playUrl: info.musicInfos.playUrl[0] },
     }),
+    ...(info.createTime !== undefined && { createTime: info.createTime }),
   };
 
   const images = info.imagePostInfo?.displayImages?.map((img: any) => ({
@@ -59,17 +70,24 @@ function extract_media(
   }));
   if (images?.length) item.imagePost = { images };
 
-  if (info.authorInfos?.nickName || info.authorInfos?.uniqueId) {
+  if (authorInfos?.nickName || authorInfos?.uniqueId) {
     item.author = {
-      ...(info.authorInfos.nickName && { nickname: info.authorInfos.nickName }),
-      ...(info.authorInfos.uniqueId && { uniqueId: info.authorInfos.uniqueId }),
+      ...(authorInfos.nickName && { nickname: authorInfos.nickName }),
+      ...(authorInfos.uniqueId && { uniqueId: authorInfos.uniqueId }),
     };
   }
 
-  if (info.diggCount !== undefined || info.playCount !== undefined) {
+  if (
+    info.diggCount !== undefined ||
+    info.playCount !== undefined ||
+    info.commentCount !== undefined ||
+    info.shareCount !== undefined
+  ) {
     item.stats = {
       ...(info.diggCount !== undefined && { diggCount: info.diggCount }),
       ...(info.playCount !== undefined && { playCount: info.playCount }),
+      ...(info.commentCount !== undefined && { commentCount: info.commentCount }),
+      ...(info.shareCount !== undefined && { shareCount: info.shareCount }),
     };
   }
 
@@ -151,11 +169,21 @@ export default async function resolve(
       author: item.author?.nickname || item.author?.uniqueId || "Unknown",
       platform: "tiktok",
     };
+    if (item.createTime !== undefined) {
+      const ts = Number(item.createTime);
+      if (Number.isFinite(ts) && ts > 0) meta.timestamp = ts;
+    }
     if (item.stats?.diggCount !== undefined) {
       meta.likes = item.stats.diggCount;
     }
     if (item.stats?.playCount !== undefined) {
       meta.views = item.stats.playCount;
+    }
+    if (item.stats?.commentCount !== undefined) {
+      meta.comments = item.stats.commentCount;
+    }
+    if (item.stats?.shareCount !== undefined) {
+      meta.shares = item.stats.shareCount;
     }
 
     return {
