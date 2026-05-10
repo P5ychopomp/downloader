@@ -18,5 +18,14 @@ export type MediaResult = {
     platform: string;
     views?: number;
     likes?: number;
+    comments?: number;
+    shares?: number;
+    timestamp?: number;
+    quoteTweet?: {
+      tweetID: string;
+      text: string;
+      author: string;
+      screenName: string;
+    };
   };
 };

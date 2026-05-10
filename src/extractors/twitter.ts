@@ -14,7 +14,7 @@ export default async function resolve(
     const api_url = `${API_BASE}${url_obj.pathname}`;
 
     const response = await http_get(api_url, options);
-    const data = (await response.json()) as {
+    type TweetPayload = {
       media_extended?: Array<{ type: string; url: string }>;
       tweetID?: string;
       text?: string;
@@ -22,36 +22,56 @@ export default async function resolve(
       user_screen_name?: string;
       likes?: number;
       views?: number;
+      replies?: number;
+      retweets?: number;
+      date_epoch?: number;
+      qrt?: TweetPayload | null;
     };
 
-    if (!data?.media_extended || data.media_extended.length === 0) {
-      throw new ParseError("No media found in tweet", "twitter");
+    const data = (await response.json()) as TweetPayload;
+
+    if (!data?.tweetID) {
+      throw new ParseError("Invalid tweet response", "twitter");
     }
 
-    const items: MediaItem[] = data.media_extended.map(
-      (media, index: number) => {
+    function media_items(
+      payload: TweetPayload,
+      prefix: string,
+    ): MediaItem[] {
+      return (payload.media_extended ?? []).map((media, index) => {
         const ext = path.extname(new URL(media.url).pathname) || ".mp4";
         const type =
           media.type === "video" || media.type === "gif" ? "video" : "image";
-
         return {
-          type: type,
+          type,
           url: media.url,
-          filename: `twitter-${data.tweetID}-${index + 1}${ext}`,
+          filename: `${prefix}-${index + 1}${ext}`,
         };
-      },
-    );
+      });
+    }
+
+    const items: MediaItem[] = [
+      ...media_items(data, `twitter-${data.tweetID}`),
+      ...(data.qrt ? media_items(data.qrt, `twitter-qrt-${data.qrt.tweetID}`) : []),
+    ];
 
     const meta: MediaResult["meta"] = {
       title: data.text || "Twitter post",
       author: `${data.user_name} (@${data.user_screen_name})`,
       platform: "twitter",
     };
-    if (data.likes !== undefined) {
-      meta.likes = data.likes;
-    }
-    if (data.views !== undefined) {
-      meta.views = data.views;
+    if (data.likes !== undefined) meta.likes = data.likes;
+    if (data.views !== undefined) meta.views = data.views;
+    if (data.replies !== undefined) meta.comments = data.replies;
+    if (data.retweets !== undefined) meta.shares = data.retweets;
+    if (data.date_epoch !== undefined) meta.timestamp = data.date_epoch;
+    if (data.qrt?.tweetID) {
+      meta.quoteTweet = {
+        tweetID: data.qrt.tweetID,
+        text: data.qrt.text || "",
+        author: data.qrt.user_name || "",
+        screenName: data.qrt.user_screen_name || "",
+      };
     }
 
     return {
