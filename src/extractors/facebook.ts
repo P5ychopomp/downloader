@@ -39,7 +39,11 @@ function traverse<T = unknown>(
   return (current === undefined ? fallback : current) as T;
 }
 
-function get_first<T = unknown>(obj: unknown, paths: (string | number | ((k: string, v: unknown) => boolean))[], fallback?: T): T {
+function get_first<T = unknown>(
+  obj: unknown,
+  paths: (string | number | ((key: string | number, val: unknown) => boolean))[],
+  fallback?: T,
+): T {
   for (const p of paths) {
     const result = traverse(obj, [p]);
     if (result !== undefined) return result as T;
@@ -180,17 +184,17 @@ function parse_graphql_video(
 
   const dash_mpd_urls = traverse<Array<{manifest_url?: string}>>(quality, [
     "dash_manifest_urls",
-    { filter: () => true },
+    () => true,
     "manifest_url",
   ]);
   const dash_manifests = traverse<Array<{manifest_xml?: string}>>(quality, [
     "dash_manifests",
-    { filter: (k) => k === "manifest_xml" },
+    (key) => key === "manifest_xml",
   ]);
 
   const hls_urls = traverse<Array<{hls_playlist_url?: string}>>(quality, [
     "hls_playlist_urls",
-    { filter: () => true },
+    () => true,
     "hls_playlist_url",
   ]);
 
@@ -214,9 +218,11 @@ function parse_graphql_video(
     author_id: get_first<string>(owner, ["id"]),
     thumbnail,
     timestamp,
-    duration:
-      float_or_none(video.playable_duration_in_ms as number) / 1000 ||
-      float_or_none(video.length_in_second as number),
+    duration: (() => {
+      const durationMs = float_or_none(video.playable_duration_in_ms as number);
+      if (durationMs != null) return durationMs / 1000;
+      return float_or_none(video.length_in_second as number);
+    })(),
     views: int_or_none(video.view_count),
     likes: int_or_none(video.like_count),
     comments: int_or_none(video.comment_count),
@@ -227,7 +233,7 @@ function parse_graphql_video(
 }
 
 function parse_sjs_blocks(html: string, video_id: string): VideoEntry | null {
-  const sjs_matches = [...html.matchAll(/data-sjs>({.*?})<\/script>/gs)];
+  const sjs_matches = [...html.matchAll(/data-sjs>({.*?})<\/script>/g)];
   const all_data: unknown[] = [];
 
   for (const match of sjs_matches) {
@@ -294,7 +300,7 @@ function parse_sjs_blocks(html: string, video_id: string): VideoEntry | null {
 
       const nodes = traverse(r, ["nodes", "node"]);
       if (nodes) {
-        const attachments = traverse(nodes as unknown, [
+        traverse(nodes as unknown, [
           ...Array.isArray(nodes)
             ? Array.from({ length: (nodes as unknown[]).length }, (_, i) => i)
             : [],
@@ -302,12 +308,12 @@ function parse_sjs_blocks(html: string, video_id: string): VideoEntry | null {
           "content",
           "story",
           "attachments",
-          { filter: () => true },
+          () => true,
         ]);
       }
 
       for (const attachment of traverse<unknown[]>(r, [
-        { filter: () => true },
+        () => true,
       ]) || []) {
         const at = attachment as Record<string, unknown>;
         const media = at.media as Record<string, unknown> | undefined;
@@ -398,11 +404,12 @@ export default async function resolve(
     const og_image = decode_unicode(
       extract_text(html, 'property="og:image" content="', '"'),
     );
-    const og_timestamp = int_or_none(
-      extract_text(html, 'property="article:published_time" content="', '"')
-        .split("T")[0]
-        .replace(/-/g, ""),
-    );
+  const og_timestamp = (() => {
+    const published = extract_text(html, 'property="article:published_time" content="', '"');
+    if (!published) return undefined;
+    const parsed = Date.parse(published);
+    return Number.isNaN(parsed) ? undefined : Math.floor(parsed / 1000);
+  })();
 
     const fb_utime = int_or_none(
       extract_text(html, 'data-utime="', '"'),
@@ -423,7 +430,7 @@ export default async function resolve(
     const meta: MediaResult["meta"] = {
       platform: "facebook",
       title: og_title || entry?.title || page_title,
-      author: entry?.author || get_first<string>(JSON.parse(`{${html.match(/actors.*?name":"([^"]+)"/)?.[0] || ""}}`), ["name"]),
+      author: entry?.author || "Unknown",
       description: og_desc || entry?.description,
       thumbnail:
         entry?.thumbnail ||
@@ -437,7 +444,6 @@ export default async function resolve(
         ) ||
         undefined,
       timestamp: entry?.timestamp || timestamp,
-      duration: entry?.duration,
       views: entry?.views || view_count,
       likes: entry?.likes || like_count,
       comments: entry?.comments || comment_count,
