@@ -12,6 +12,7 @@ interface MediaNode {
   is_video: boolean;
   video_url?: string;
   display_url?: string;
+  display_resources?: Array<{ src: string; config_width: number }>;
   thumbnail_src?: string;
   __typename?: string;
   owner?: { username?: string };
@@ -20,6 +21,17 @@ interface MediaNode {
   edge_media_preview_like?: { count?: number };
   edge_media_to_parent_comment?: { count?: number };
   edge_sidecar_to_children?: { edges?: Array<{ node: MediaNode }> };
+}
+
+function stripIgParams(url: string): string {
+  const u = new URL(url);
+  const keys = [...u.searchParams.keys()];
+  for (const k of keys) {
+    if (["stp", "efg", "_nc_ht", "_nc_cat", "_nc_oc", "_nc_ohc", "_nc_gid", "edm", "ccb", "ig_cache_key", "oh", "oe", "_nc_sid"].includes(k)) {
+      u.searchParams.delete(k);
+    }
+  }
+  return u.toString();
 }
 
 function create_media_item(
@@ -37,7 +49,7 @@ function create_media_item(
 
   return {
     type: is_video ? "video" : "image",
-    url: media_url,
+    url: stripIgParams(media_url),
     filename: `instagram-${shortcode}${suffix}.${extension}`,
   };
 }
@@ -122,7 +134,9 @@ export default async function resolve(
     const like_count = data.edge_media_preview_like?.count;
     const comment_count = data.edge_media_to_parent_comment?.count;
     const taken_at = data.taken_at_timestamp;
-    const thumbnail_img = data.thumbnail_src ?? data.display_url;
+    const thumbnail_img =
+      data.display_resources?.slice().sort((a, b) => b.config_width - a.config_width)[0]?.src
+      ?? data.display_url;
 
     const meta: MediaResult["meta"] = {
       platform: "instagram",
@@ -130,7 +144,7 @@ export default async function resolve(
       author: username || "Unknown",
     };
     if (taken_at != null && taken_at > 0) meta.timestamp = taken_at;
-    if (thumbnail_img) meta.thumbnail = thumbnail_img;
+    meta.thumbnail = stripIgParams(thumbnail_img);
     if (like_count !== undefined) meta.likes = like_count;
     if (comment_count !== undefined) meta.comments = comment_count;
 
