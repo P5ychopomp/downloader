@@ -14,7 +14,10 @@ interface MediaNode {
   display_url?: string;
   __typename?: string;
   owner?: { username?: string };
+  taken_at_timestamp?: number;
   edge_media_to_caption?: { edges?: Array<{ node?: { text?: string } }> };
+  edge_media_preview_like?: { count?: number };
+  edge_media_to_parent_comment?: { count?: number };
   edge_sidecar_to_children?: { edges?: Array<{ node: MediaNode }> };
 }
 
@@ -115,6 +118,18 @@ export default async function resolve(
 
     const caption = data.edge_media_to_caption?.edges?.[0]?.node?.text;
     const username = data.owner?.username;
+    const like_count = data.edge_media_preview_like?.count;
+    const comment_count = data.edge_media_to_parent_comment?.count;
+    const taken_at = data.taken_at_timestamp;
+
+    const meta: MediaResult["meta"] = {
+      platform: "instagram",
+      title: caption || "Instagram post",
+      author: username || "Unknown",
+    };
+    if (taken_at !== undefined) meta.timestamp = taken_at;
+    if (like_count !== undefined) meta.likes = like_count;
+    if (comment_count !== undefined) meta.comments = comment_count;
 
     return {
       urls: items,
@@ -122,11 +137,7 @@ export default async function resolve(
         "User-Agent": USER_AGENT,
         Referer: "https://www.instagram.com/",
       },
-      meta: {
-        platform: "instagram",
-        title: caption || "Instagram post",
-        author: username || "Unknown",
-      },
+      meta,
     };
   } catch (e: any) {
     if (e instanceof NetworkError || e instanceof ParseError) throw e;
