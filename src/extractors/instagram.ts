@@ -134,9 +134,6 @@ export default async function resolve(
     const like_count = data.edge_media_preview_like?.count;
     const comment_count = data.edge_media_to_parent_comment?.count;
     const taken_at = data.taken_at_timestamp;
-    const thumbnail_img =
-      data.display_resources?.slice().sort((a, b) => b.config_width - a.config_width)[0]?.src
-      ?? data.display_url;
 
     const meta: MediaResult["meta"] = {
       platform: "instagram",
@@ -144,7 +141,6 @@ export default async function resolve(
       author: username || "Unknown",
     };
     if (taken_at != null && taken_at > 0) meta.timestamp = taken_at;
-    meta.thumbnail = stripIgParams(thumbnail_img);
     if (like_count !== undefined) meta.likes = like_count;
     if (comment_count !== undefined) meta.comments = comment_count;
 
