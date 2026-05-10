@@ -12,9 +12,10 @@ interface MediaNode {
   is_video: boolean;
   video_url?: string;
   display_url?: string;
+  thumbnail_src?: string;
   __typename?: string;
   owner?: { username?: string };
-  taken_at_timestamp?: number;
+  taken_at_timestamp?: number | null;
   edge_media_to_caption?: { edges?: Array<{ node?: { text?: string } }> };
   edge_media_preview_like?: { count?: number };
   edge_media_to_parent_comment?: { count?: number };
@@ -121,13 +122,15 @@ export default async function resolve(
     const like_count = data.edge_media_preview_like?.count;
     const comment_count = data.edge_media_to_parent_comment?.count;
     const taken_at = data.taken_at_timestamp;
+    const thumbnail_img = data.thumbnail_src ?? data.display_url;
 
     const meta: MediaResult["meta"] = {
       platform: "instagram",
       title: caption || "Instagram post",
       author: username || "Unknown",
     };
-    if (taken_at !== undefined) meta.timestamp = taken_at;
+    if (taken_at != null && taken_at > 0) meta.timestamp = taken_at;
+    if (thumbnail_img) meta.thumbnail = thumbnail_img;
     if (like_count !== undefined) meta.likes = like_count;
     if (comment_count !== undefined) meta.comments = comment_count;
 
