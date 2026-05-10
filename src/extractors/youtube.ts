@@ -19,6 +19,10 @@ type YoutubePlayerResponse = {
     title: string;
     author: string;
     viewCount: string;
+    shortDescription?: string;
+    thumbnail?: {
+      thumbnails: Array<{ url: string; width: number; height: number }>;
+    };
   };
   streamingData?: {
     formats?: Array<YoutubeFormat>;
@@ -53,6 +57,13 @@ function sanitize_filename(title: string): string {
 function extract_innertube_key(html: string): string | null {
   const match = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
   return match?.[1] || null;
+}
+
+function extract_publish_timestamp(html: string): number | undefined {
+  const match = html.match(/"publishDate":"([^"]+)"/);
+  if (!match?.[1]) return undefined;
+  const ts = Math.floor(new Date(match[1]).getTime() / 1000);
+  return Number.isFinite(ts) ? ts : undefined;
 }
 
 function select_urls(
@@ -204,13 +215,28 @@ export default async function resolve(
       ? Number.parseInt(data.videoDetails.viewCount, 10)
       : undefined;
 
+    const thumbnails = data.videoDetails?.thumbnail?.thumbnails;
+    const thumbnail_url = thumbnails?.length
+      ? thumbnails[thumbnails.length - 1].url
+      : undefined;
+
     const meta: MediaResult["meta"] = {
       title: sanitize_filename(title),
       author,
       platform: "youtube",
     };
+    if (data.videoDetails?.shortDescription) {
+      meta.description = data.videoDetails.shortDescription;
+    }
+    if (thumbnail_url) {
+      meta.thumbnail = thumbnail_url;
+    }
     if (views !== undefined && Number.isFinite(views)) {
       meta.views = views;
+    }
+    const publish_ts = extract_publish_timestamp(html);
+    if (publish_ts !== undefined) {
+      meta.timestamp = publish_ts;
     }
 
     return {

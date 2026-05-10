@@ -16,6 +16,8 @@ export type MediaResult = {
     title: string;
     author: string;
     platform: string;
+    description?: string;
+    thumbnail?: string;
     views?: number;
     likes?: number;
     comments?: number;
