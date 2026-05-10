@@ -189,7 +189,7 @@ export default async function resolve(
       },
       meta,
     };
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (e instanceof NetworkError && e.statusCode === 401 && oembed) {
       const meta: MediaResult["meta"] = {
         platform: "instagram",
@@ -218,6 +218,7 @@ export default async function resolve(
       };
     }
     if (e instanceof NetworkError || e instanceof ParseError) throw e;
-    throw new ParseError(e.message, "instagram");
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    throw new ParseError(msg, "instagram");
   }
 }

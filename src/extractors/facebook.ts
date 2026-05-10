@@ -137,18 +137,6 @@ function parse_graphql_video(
   ]);
 
   let owner: Record<string, unknown> = {};
-  let playable_video = video;
-
-  if (short_form) {
-    playable_video = (creation_story as Record<string, unknown>) || video;
-    const vo = short_form.video_owner as Record<string, unknown> | undefined;
-    if (vo) owner = vo;
-  } else if (creation_story) {
-    owner = get_first<Record<string, unknown>>(video, [
-      "short_form_video_context",
-      "video_owner",
-    ], {});
-  }
 
   const playable_url = url_or_none(
     traverse(video, ["playable_url"]) ||
@@ -163,6 +151,16 @@ function parse_graphql_video(
   );
 
   if (!playable_url && !playable_url_hd) return null;
+
+  if (short_form) {
+    const vo = short_form.video_owner as Record<string, unknown> | undefined;
+    if (vo) owner = vo;
+  } else if (creation_story) {
+    owner = get_first<Record<string, unknown>>(video, [
+      "short_form_video_context",
+      "video_owner",
+    ], {});
+  }
 
   const quality = traverse<Record<string, unknown>>(video, ["videoDeliveryResponseFragment", "videoDeliveryResponseResult"]);
   const progressive_urls = traverse<Array<{progressive_url?: string; metadata?: {quality?: string}}>>(quality, ["progressive_urls"]);
@@ -181,22 +179,6 @@ function parse_graphql_video(
       }
     }
   }
-
-  const dash_mpd_urls = traverse<Array<{manifest_url?: string}>>(quality, [
-    "dash_manifest_urls",
-    () => true,
-    "manifest_url",
-  ]);
-  const dash_manifests = traverse<Array<{manifest_xml?: string}>>(quality, [
-    "dash_manifests",
-    (key) => key === "manifest_xml",
-  ]);
-
-  const hls_urls = traverse<Array<{hls_playlist_url?: string}>>(quality, [
-    "hls_playlist_urls",
-    () => true,
-    "hls_playlist_url",
-  ]);
 
   const video_owner_name = get_first<string>(owner, ["name"]);
   const timestamp = int_or_none(video.publish_time ?? video.creation_time);
@@ -460,8 +442,9 @@ export default async function resolve(
     }
 
     return { urls, headers: { "User-Agent": USER_AGENT }, meta };
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (e instanceof NetworkError || e instanceof ParseError) throw e;
-    throw new ParseError(e.message, "facebook");
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    throw new ParseError(msg, "facebook");
   }
 }

@@ -339,7 +339,7 @@ export default async function resolve(
       headers: {},
       meta,
     };
-  } catch (e: any) {
+  } catch (e: unknown) {
     const oembed = await fetch_oembed(url, request_headers, timeout);
     if (oembed) {
       const meta: MediaResult["meta"] = {
@@ -362,6 +362,7 @@ export default async function resolve(
     }
 
     if (e instanceof NetworkError || e instanceof ParseError) throw e;
-    throw new ParseError(e.message, "youtube");
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    throw new ParseError(msg, "youtube");
   }
 }

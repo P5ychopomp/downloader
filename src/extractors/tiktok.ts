@@ -42,8 +42,8 @@ function extract_media(
   const match = html.match(EMBED_STATE_REGEX);
   if (!match?.[1]) return undefined;
 
-  const json = JSON.parse(match[1]) as any;
-  const data = json.source?.data || {};
+  const json = JSON.parse(match[1]) as unknown;
+  const data = (json as { source?: { data?: Record<string, unknown> } })?.source?.data || {};
   const key = Object.keys(data).find((k) =>
     k.startsWith(`/embed/v2/${post_id}`),
   );
@@ -65,7 +65,7 @@ function extract_media(
     ...(info.createTime !== undefined && { createTime: info.createTime }),
   };
 
-  const images = info.imagePostInfo?.displayImages?.map((img: any) => ({
+  const images = info.imagePostInfo?.displayImages?.map((img: { urlList?: string[] }) => ({
     imageURL: { urlList: img.urlList },
   }));
   if (images?.length) item.imagePost = { images };
@@ -191,8 +191,9 @@ export default async function resolve(
       headers: { Referer: "https://www.tiktok.com/" },
       meta,
     };
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (e instanceof NetworkError || e instanceof ParseError) throw e;
-    throw new ParseError(e.message, "tiktok");
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    throw new ParseError(msg, "tiktok");
   }
 }
