@@ -214,6 +214,109 @@ function parse_graphql_video(
   };
 }
 
+function find_all_in_tree(obj: unknown, key: string, results: unknown[] = [], depth = 0): unknown[] {
+  if (depth > 25 || !obj || typeof obj !== "object") return results;
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (k === key && v !== null && v !== undefined) results.push(v);
+    if (v && typeof v === "object") find_all_in_tree(v, key, results, depth + 1);
+  }
+  return results;
+}
+
+interface PostMeta {
+  author?: string;
+  description?: string;
+  timestamp?: number;
+  thumbnail?: string;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+}
+
+function parse_sjs_post_meta(html: string): PostMeta {
+  const result: PostMeta = {};
+  const sjs_matches = [...html.matchAll(/data-sjs>({.*?})<\/script>/g)];
+
+  for (const match of sjs_matches) {
+    const data = parse_json_safe(match[1]);
+    if (!data) continue;
+
+    if (!result.author) {
+      for (const actors of find_all_in_tree(data, "actors")) {
+        if (!Array.isArray(actors)) continue;
+        const named = (actors as Record<string, unknown>[]).find(
+          (a) => a && typeof a.name === "string" && (a.name as string).length > 0,
+        );
+        if (named) {
+          result.author = named.name as string;
+          break;
+        }
+      }
+    }
+
+    if (!result.description) {
+      for (const msg of find_all_in_tree(data, "message")) {
+        const m = msg as Record<string, unknown>;
+        if (m?.text && typeof m.text === "string" && (m.text as string).length > 0) {
+          result.description = m.text as string;
+          break;
+        }
+      }
+    }
+
+    if (!result.timestamp) {
+      for (const t of find_all_in_tree(data, "creation_time")) {
+        if (typeof t === "number" && t > 1_000_000_000) {
+          result.timestamp = t;
+          break;
+        }
+      }
+    }
+
+    for (const rc of find_all_in_tree(data, "reaction_count")) {
+      const r = rc as Record<string, unknown>;
+      if (r && typeof r.count === "number" && r.count > (result.likes ?? 0)) {
+        result.likes = r.count as number;
+      }
+    }
+
+    if (!result.comments) {
+      for (const cri of find_all_in_tree(data, "comment_rendering_instance")) {
+        const comments = (cri as Record<string, unknown>)?.comments as Record<string, unknown> | undefined;
+        if (comments && typeof comments.total_count === "number") {
+          result.comments = comments.total_count as number;
+          break;
+        }
+      }
+    }
+
+    if (!result.shares) {
+      for (const sc of find_all_in_tree(data, "share_count")) {
+        const s = sc as Record<string, unknown>;
+        if (s && typeof s.count === "number" && s.count > 0) {
+          result.shares = s.count as number;
+          break;
+        }
+      }
+    }
+
+    if (!result.thumbnail) {
+      for (const img of find_all_in_tree(data, "image")) {
+        const i = img as Record<string, unknown>;
+        if (i?.uri && typeof i.uri === "string" && (i.uri as string).includes("scontent")) {
+          const uri = i.uri as string;
+          if (!uri.includes("s40x40") && !uri.includes("s50x50") && !uri.includes("s60x60")) {
+            result.thumbnail = uri;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 function parse_sjs_blocks(html: string, video_id: string): VideoEntry | null {
   const sjs_matches = [...html.matchAll(/data-sjs>({.*?})<\/script>/g)];
   const all_data: unknown[] = [];
@@ -371,11 +474,12 @@ export default async function resolve(
     const html = await response.text();
 
     const entry = parse_sjs_blocks(html, video_id);
+    const post_meta = parse_sjs_post_meta(html);
 
     const page_title =
       decode_unicode(
         extract_text(html, '<title>', "</title>").trim(),
-      ) || "Facebook Video";
+      ) || "Facebook";
 
     const og_title = decode_unicode(
       extract_text(html, 'property="og:title" content="', '"'),
@@ -386,17 +490,17 @@ export default async function resolve(
     const og_image = decode_unicode(
       extract_text(html, 'property="og:image" content="', '"'),
     );
-  const og_timestamp = (() => {
-    const published = extract_text(html, 'property="article:published_time" content="', '"');
-    if (!published) return undefined;
-    const parsed = Date.parse(published);
-    return Number.isNaN(parsed) ? undefined : Math.floor(parsed / 1000);
-  })();
+    const og_timestamp = (() => {
+      const published = extract_text(html, 'property="article:published_time" content="', '"');
+      if (!published) return undefined;
+      const parsed = Date.parse(published);
+      return Number.isNaN(parsed) ? undefined : Math.floor(parsed / 1000);
+    })();
 
     const fb_utime = int_or_none(
       extract_text(html, 'data-utime="', '"'),
     );
-    const timestamp = fb_utime || og_timestamp;
+    const html_timestamp = fb_utime || og_timestamp;
     const view_count = int_or_none(
       extract_text(html, '"viewCount":"', '"') ||
         extract_text(html, "viewCount\x3A\x22", "\x22"),
@@ -409,27 +513,28 @@ export default async function resolve(
     );
 
     const urls: MediaItem[] = [];
+    const thumbnail =
+      entry?.thumbnail ||
+      post_meta.thumbnail ||
+      og_image ||
+      url_or_none(
+        decode_unicode(
+          extract_text(html, '"thumbnailImage":{"uri":"', '"').split("?")[0],
+        ),
+      ) ||
+      undefined;
+
     const meta: MediaResult["meta"] = {
       platform: "facebook",
-      title: og_title || entry?.title || page_title,
-      author: entry?.author || "Unknown",
-      description: og_desc || entry?.description,
-      thumbnail:
-        entry?.thumbnail ||
-        og_image ||
-        decode_unicode(
-          extract_text(
-            html,
-            '"thumbnailImage":{"uri":"',
-            '"',
-          ).split("?")[0],
-        ) ||
-        undefined,
-      timestamp: entry?.timestamp || timestamp,
-      views: entry?.views || view_count,
-      likes: entry?.likes || like_count,
-      comments: entry?.comments || comment_count,
-      shares: entry?.shares,
+      title: og_title || entry?.title || post_meta.description?.slice(0, 100) || page_title,
+      author: post_meta.author || entry?.author || og_title || "Unknown",
+      description: og_desc || post_meta.description || entry?.description,
+      thumbnail,
+      timestamp: post_meta.timestamp || entry?.timestamp || html_timestamp,
+      views: entry?.views || view_count || undefined,
+      likes: post_meta.likes || entry?.likes || like_count || undefined,
+      comments: post_meta.comments || entry?.comments || comment_count || undefined,
+      shares: post_meta.shares || entry?.shares || undefined,
     };
 
     if (entry?.playable_url) {
@@ -438,6 +543,12 @@ export default async function resolve(
         type: "video",
         url: entry.playable_url,
         filename: `fb-${video_id}.${ext}`,
+      });
+    } else if (thumbnail && thumbnail.includes("scontent")) {
+      urls.push({
+        type: "image",
+        url: thumbnail,
+        filename: `fb-${video_id}.jpg`,
       });
     }
 
