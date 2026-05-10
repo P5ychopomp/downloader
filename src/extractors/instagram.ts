@@ -1,4 +1,4 @@
-import { http_post } from "../http.ts";
+import { http_get, http_post } from "../http.ts";
 import { NetworkError, ParseError } from "../errors.ts";
 import type { MediaItem, MediaResult, ResolveOptions } from "../types.ts";
 
@@ -7,6 +7,19 @@ const GRAPHQL_DOC_ID = "8845758582119845";
 const USER_AGENT =
   "Instagram 309.0.0.15.109 Android (31/12; 480dpi; 1080x2228; samsung; SM-G996B; t2s; qcom; en_US; 544099989)";
 const SHORTCODE_REGEX = /(?:p|reel|tv)\/([A-Za-z0-9_-]+)/;
+const OEMBED_ENDPOINTS = [
+  "https://www.instagram.com/api/v1/oembed/",
+  "https://www.instagram.com/oembed/",
+];
+
+type OEmbedResponse = {
+  title?: string;
+  author_name?: string;
+  author_url?: string;
+  thumbnail_url?: string;
+  thumbnail_width?: number;
+  thumbnail_height?: number;
+};
 
 interface MediaNode {
   is_video: boolean;
@@ -60,6 +73,38 @@ function process_media(media: MediaNode, shortcode: string): MediaItem[] {
   return item ? [item] : [];
 }
 
+async function fetch_oembed(
+  url: string,
+  options: ResolveOptions,
+): Promise<OEmbedResponse | null> {
+  for (const endpoint of OEMBED_ENDPOINTS) {
+    try {
+      const oembedUrl = new URL(endpoint);
+      oembedUrl.searchParams.set("url", url);
+
+      const response = await http_get(oembedUrl.toString(), {
+        headers: {
+          "User-Agent": USER_AGENT,
+          "X-IG-App-ID": IG_APP_ID,
+          "X-IG-WWW-Claim": "0",
+          "X-Requested-With": "XMLHttpRequest",
+          Accept: "*/*",
+          "Accept-Language": "en-US,en;q=0.9",
+          Referer: "https://www.instagram.com/",
+          ...options.headers,
+        },
+        timeout: options.timeout,
+      });
+
+      return (await response.json()) as OEmbedResponse;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 export default async function resolve(
   url: string,
   options: ResolveOptions,
@@ -74,6 +119,8 @@ export default async function resolve(
     doc_id: GRAPHQL_DOC_ID,
     variables: JSON.stringify({ shortcode }),
   });
+
+  const oembed = await fetch_oembed(url, options);
 
   try {
     const request_options: {
@@ -125,8 +172,10 @@ export default async function resolve(
 
     const meta: MediaResult["meta"] = {
       platform: "instagram",
-      title: caption || "Instagram post",
-      author: username || "Unknown",
+      title: caption || oembed?.title || "Instagram post",
+      author: username || oembed?.author_name || "Unknown",
+      description: caption || oembed?.title,
+      thumbnail: data.thumbnail_src || oembed?.thumbnail_url,
     };
     if (taken_at != null && taken_at > 0) meta.timestamp = taken_at;
     if (like_count !== undefined) meta.likes = like_count;
@@ -141,6 +190,33 @@ export default async function resolve(
       meta,
     };
   } catch (e: any) {
+    if (e instanceof NetworkError && e.statusCode === 401 && oembed) {
+      const meta: MediaResult["meta"] = {
+        platform: "instagram",
+        title: oembed.title || "Instagram post",
+        author: oembed.author_name || "Unknown",
+        description: oembed.title,
+        thumbnail: oembed.thumbnail_url,
+      };
+
+      const thumbUrl = oembed.thumbnail_url;
+      const urls: MediaItem[] = thumbUrl
+        ? [{ type: "image", url: thumbUrl, filename: `instagram-${shortcode}.jpg` }]
+        : [];
+
+      if (urls.length === 0) {
+        throw e;
+      }
+
+      return {
+        urls,
+        headers: {
+          "User-Agent": USER_AGENT,
+          Referer: "https://www.instagram.com/",
+        },
+        meta,
+      };
+    }
     if (e instanceof NetworkError || e instanceof ParseError) throw e;
     throw new ParseError(e.message, "instagram");
   }
