@@ -23,6 +23,7 @@ export type MediaResult = {
     comments?: number;
     shares?: number;
     timestamp?: number;
+    reposts?: number;
     quoteTweet?: {
       tweetID: string;
       text: string;

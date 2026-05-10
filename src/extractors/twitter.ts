@@ -26,6 +26,8 @@ export default async function resolve(
       retweets?: number;
       date_epoch?: number;
       qrt?: TweetPayload | null;
+      retweet?: TweetPayload | null;
+      retweetURL?: string | null;
     };
 
     const data = (await response.json()) as TweetPayload;
@@ -63,7 +65,7 @@ export default async function resolve(
     if (data.likes !== undefined) meta.likes = data.likes;
     if (data.views !== undefined) meta.views = data.views;
     if (data.replies !== undefined) meta.comments = data.replies;
-    if (data.retweets !== undefined) meta.shares = data.retweets;
+    if (data.retweets !== undefined) meta.reposts = data.retweets;
     if (data.date_epoch !== undefined) meta.timestamp = data.date_epoch;
     if (data.qrt?.tweetID) {
       meta.quoteTweet = {
