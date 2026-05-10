@@ -2,7 +2,8 @@ import { http_get, http_post } from "../http.ts";
 import { NetworkError, ParseError } from "../errors.ts";
 import type { MediaItem, MediaResult, ResolveOptions } from "../types.ts";
 
-const INNERTUBE_API_URL = "https://www.youtube.com/youtubei/v1/player?key=";
+const INNERTUBE_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?key=";
+const INNERTUBE_NEXT_URL = "https://www.youtube.com/youtubei/v1/next?key=";
 
 const ANDROID_CLIENT = {
   clientName: "ANDROID",
@@ -11,6 +12,13 @@ const ANDROID_CLIENT = {
   hl: "en",
   gl: "US",
   userAgent: "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip",
+};
+
+const TV_CLIENT = {
+  clientName: "TVHTML5",
+  clientVersion: "7.20240101",
+  hl: "en",
+  gl: "US",
 };
 
 type YoutubePlayerResponse = {
@@ -64,6 +72,23 @@ function extract_publish_timestamp(html: string): number | undefined {
   if (!match?.[1]) return undefined;
   const ts = Math.floor(new Date(match[1]).getTime() / 1000);
   return Number.isFinite(ts) ? ts : undefined;
+}
+
+function deep_find(obj: unknown, key: string): unknown {
+  if (typeof obj !== "object" || obj === null) return undefined;
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (k === key) return v;
+    const found = deep_find(v, key);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function parse_abbreviated_number(text: string): number | undefined {
+  const m = text.trim().match(/^([\d.]+)\s*([KkMmBb]?)$/);
+  if (!m) return undefined;
+  const multipliers: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 };
+  return Math.round(parseFloat(m[1]) * (multipliers[m[2].toLowerCase()] ?? 1));
 }
 
 function select_urls(
@@ -185,27 +210,46 @@ export default async function resolve(
       throw new ParseError("Could not find Innertube API key", "youtube");
     }
 
-    const innertube_response = await http_post(
-      `${INNERTUBE_API_URL}${api_key}`,
-      JSON.stringify({
-        videoId: video_id,
-        context: { client: ANDROID_CLIENT },
-        contentCheckOk: true,
-        racyCheckOk: true,
-      }),
-      {
-        headers: {
-          ...request_headers,
-          "Content-Type": "application/json",
-          "User-Agent": ANDROID_CLIENT.userAgent,
-          "X-Youtube-Client-Name": "3",
-          "X-Youtube-Client-Version": ANDROID_CLIENT.clientVersion,
+    const [innertube_response, next_response] = await Promise.all([
+      http_post(
+        `${INNERTUBE_PLAYER_URL}${api_key}`,
+        JSON.stringify({
+          videoId: video_id,
+          context: { client: ANDROID_CLIENT },
+          contentCheckOk: true,
+          racyCheckOk: true,
+        }),
+        {
+          headers: {
+            ...request_headers,
+            "Content-Type": "application/json",
+            "User-Agent": ANDROID_CLIENT.userAgent,
+            "X-Youtube-Client-Name": "3",
+            "X-Youtube-Client-Version": ANDROID_CLIENT.clientVersion,
+          },
+          timeout,
         },
-        timeout,
-      },
-    );
+      ),
+      http_post(
+        `${INNERTUBE_NEXT_URL}${api_key}`,
+        JSON.stringify({
+          videoId: video_id,
+          context: { client: TV_CLIENT },
+        }),
+        {
+          headers: {
+            ...request_headers,
+            "Content-Type": "application/json",
+            "X-Youtube-Client-Name": "7",
+            "X-Youtube-Client-Version": TV_CLIENT.clientVersion,
+          },
+          timeout,
+        },
+      ).catch(() => null),
+    ]);
 
     const data = (await innertube_response.json()) as YoutubePlayerResponse;
+    const next_data = next_response ? await next_response.json() : null;
 
     const urls = select_urls(data, video_id);
 
@@ -237,6 +281,20 @@ export default async function resolve(
     const publish_ts = extract_publish_timestamp(html);
     if (publish_ts !== undefined) {
       meta.timestamp = publish_ts;
+    }
+    if (next_data) {
+      const likes = deep_find(next_data, "likeCount");
+      if (typeof likes === "number" && Number.isFinite(likes)) {
+        meta.likes = likes;
+      }
+      const comment_count_raw = deep_find(next_data, "commentCount");
+      if (typeof comment_count_raw === "object" && comment_count_raw !== null) {
+        const text = (comment_count_raw as { simpleText?: string }).simpleText;
+        if (text) {
+          const parsed = parse_abbreviated_number(text);
+          if (parsed !== undefined) meta.comments = parsed;
+        }
+      }
     }
 
     return {
