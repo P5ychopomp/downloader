@@ -25,6 +25,32 @@ type TiktokMediaPayload = {
   };
 };
 
+type TiktokAuthorInfos = {
+  nickName?: string;
+  uniqueId?: string;
+};
+
+/** The embed blob's per-post payload, as far as extract_media reads it. */
+type TiktokEmbedEntry = {
+  videoData?: {
+    itemInfos?: {
+      id?: string;
+      text?: string;
+      covers?: string[];
+      video?: { urls?: string[] };
+      musicInfos?: { playUrl?: string[] };
+      createTime?: number | string;
+      imagePostInfo?: { displayImages?: Array<{ urlList?: string[] }> };
+      authorInfos?: TiktokAuthorInfos;
+      diggCount?: number;
+      playCount?: number;
+      commentCount?: number;
+      shareCount?: number;
+    };
+    authorInfos?: TiktokAuthorInfos;
+  };
+};
+
 function normalize_tiktok_url_entities(url: string): string {
   if (url.includes("\\u0026")) {
     return url.replaceAll("\\u0026", "&");
@@ -43,7 +69,9 @@ function extract_media(
   if (!match?.[1]) return undefined;
 
   const json = JSON.parse(match[1]) as unknown;
-  const data = (json as { source?: { data?: Record<string, unknown> } })?.source?.data || {};
+  const data =
+    (json as { source?: { data?: Record<string, TiktokEmbedEntry | undefined> } })
+      ?.source?.data || {};
   const key = Object.keys(data).find((k) =>
     k.startsWith(`/embed/v2/${post_id}`),
   );
